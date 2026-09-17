@@ -242,18 +242,13 @@ js.calc <- rk.paste.JS(
   echo("\tFA.results <- "),
   js(
     if(factorMethod == "PCA"){
-      echo("principal(")
-    } else if(kaiser){
-      echo("kaiser(", corrMethod, "(")
+      echo("principal(r=", dataSelected)
     } else {
-      echo(corrMethod, "(")
+      echo("fa(r=", dataSelected)
     },
-    if(dataSelected){ 
-      if(factorMethod == "EFA" && corrMethod == "fa.poly"){
-        echo("x=", dataSelected)
-      } else {
-        echo("r=", dataSelected)
-      }
+    # Fix for deprecated fa.poly: Pass cor="poly" inside fa()
+    if(factorMethod == "EFA" && corrMethod == "fa.poly"){
+      echo(",\n\t\tcor=\"poly\"")
     } else {},
     if(numFactors > 1){
       echo(",\n\t\tnfactors=", numFactors)
@@ -261,14 +256,17 @@ js.calc <- rk.paste.JS(
     if((factorMethod == "PCA" || corrMethod == "fa") && showResiduals){
       echo(",\n\t\tresiduals=TRUE")
     } else {},
+    # Normal Rotation logic (No more kaiser wrappers needed)
     if(factorMethod == "PCA"){
       echo(",\n\t\trotate=\"", rotationMethodPCA, "\"")
     } else {
-      if(kaiser){
-        echo(",\n\t\trotate=\"none\"")
-      } else {
-        echo(",\n\t\trotate=\"", rotationMethodEFA, "\"")
-      }
+      echo(",\n\t\trotate=\"", rotationMethodEFA, "\"")
+    },
+    # Apply Kaiser Normalization natively
+    if(kaiser){
+      echo(",\n\t\tnormalize=TRUE")
+    } else {
+      echo(",\n\t\tnormalize=FALSE")
     },
     if(numObs > 0){
       echo(",\n\t\tn.obs=", numObs)
@@ -306,10 +304,7 @@ js.calc <- rk.paste.JS(
       if(matrixToScore == "false"){
         echo(",\n\t\toblique.scores=FALSE")
       } else {}
-    },
-    if(factorMethod == "EFA" && kaiser){
-      echo("), rotate=\"", rotationMethodEFA, "\"")
-    } else {}
+    }
   ),
   echo(")\n\n")
 )
