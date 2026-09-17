@@ -228,17 +228,14 @@ js.frm.score <- rk.JS.vars(componentScores, modifiers="checked")
 js.frm.iterate <- rk.JS.vars(iterate, modifiers="checked")
 
 js.calc <- rk.paste.JS(
-  # create a variable for oblique transformations
+  # 1. Recalculate 'isObrot' in pure JS
   "var obrot = new Array(\"promax\", \"oblimin\", \"simplimax\", \"bentlerQ\", \"geominQ\", \"biquartimin\", \"cluster\");\n",
-  js(
-    if(id("(obrot.indexOf(",rotationMethodEFA ,") == -1 && ", factorMethod,
-    " != \"PCA\") | (obrot.indexOf(", rotationMethodPCA ,") == -1 && ", factorMethod,
-    " == \"PCA\")")){
-      "isObrot = false;"
-    } else {
-      "isObrot = true;"
-    }
-  ),
+  "var isObrot = false;\n",
+  paste0("if (", id(numFactors), " > 1) {\n"),
+  paste0("  if (", id(factorMethod), " == 'PCA' && obrot.indexOf(", id(rotationMethodPCA), ") !== -1) isObrot = true;\n"),
+  paste0("  if (", id(factorMethod), " != 'PCA' && obrot.indexOf(", id(rotationMethodEFA), ") !== -1) isObrot = true;\n"),
+  "}\n",
+
   echo("\tFA.results <- "),
   js(
     if(factorMethod == "PCA"){
@@ -246,7 +243,7 @@ js.calc <- rk.paste.JS(
     } else {
       echo("fa(r=", dataSelected)
     },
-    # Fix for deprecated fa.poly: Pass cor="poly" inside fa()
+    # Fix for deprecated fa.poly
     if(factorMethod == "EFA" && corrMethod == "fa.poly"){
       echo(",\n\t\tcor=\"poly\"")
     } else {},
@@ -256,13 +253,13 @@ js.calc <- rk.paste.JS(
     if((factorMethod == "PCA" || corrMethod == "fa") && showResiduals){
       echo(",\n\t\tresiduals=TRUE")
     } else {},
-    # Normal Rotation logic (No more kaiser wrappers needed)
+    # Rotation logic
     if(factorMethod == "PCA"){
       echo(",\n\t\trotate=\"", rotationMethodPCA, "\"")
     } else {
       echo(",\n\t\trotate=\"", rotationMethodEFA, "\"")
     },
-    # Apply Kaiser Normalization natively
+    # Apply Kaiser normalization natively
     if(kaiser){
       echo(",\n\t\tnormalize=TRUE")
     } else {
@@ -310,107 +307,81 @@ js.calc <- rk.paste.JS(
 )
 
 js.print <- rk.paste.JS(
-  rk.JS.vars(factorMethod, numFactors, rotationMethodPCA, factorMethodEFA, rotationMethodEFA,
-    kaiser, showDecimals, cutoff),
-  echo("\tdigits <- function(obj) {
-    return(format(round(obj, digits=", showDecimals, "), nsmall=", showDecimals, "))
-  }\n"),
+  rk.JS.vars(factorMethod, numFactors, rotationMethodPCA, factorMethodEFA, rotationMethodEFA, kaiser, showDecimals, cutoff),
+
+  # 1. Recalculate 'isObrot' in pure JS
+  "var obrot = new Array(\"promax\", \"oblimin\", \"simplimax\", \"bentlerQ\", \"geominQ\", \"biquartimin\", \"cluster\");\n",
+  "var isObrot = false;\n",
+  paste0("if (", id(numFactors), " > 1) {\n"),
+  paste0("  if (", id(factorMethod), " == 'PCA' && obrot.indexOf(", id(rotationMethodPCA), ") !== -1) isObrot = true;\n"),
+  paste0("  if (", id(factorMethod), " != 'PCA' && obrot.indexOf(", id(rotationMethodEFA), ") !== -1) isObrot = true;\n"),
+  "}\n",
+
+  echo("\tdigits <- function(obj) {\n    return(format(round(obj, digits=", showDecimals, "), nsmall=", showDecimals, "))\n  }\n"),
   R.comment("Make matrix from loadings, for more flexible output"),
-  echo("\tFA.load.dim <- dim(FA.results$loadings)
-  FA.load.names <- dimnames(FA.results$loadings)\n"),
+  echo("\tFA.load.dim <- dim(FA.results$loadings)\n  FA.load.names <- dimnames(FA.results$loadings)\n"),
   R.comment("Nicen component names"),
-  echo("\tFA.load.names[[2]] <- paste("),
-  js(
-    if(factorMethod == "PCA"){
-      echo("\"Component\"")
-    } else {
-      echo("\"Factor\"")
-    }
-  ),
-  echo(", 1:length(FA.load.names[[2]]))
-  FA.load <- FA.results$loadings[!is.character(FA.results$loadings)]
-  FA.load.mtx <- matrix(FA.load, nrow=FA.load.dim[1], dimnames=FA.load.names)\n"),
+
+  # 2. Naming logic (Component vs Factor) in pure JS
+  paste0("if (", id(factorMethod), " == 'PCA') {\n"),
+  echo("\tFA.load.names[[2]] <- paste(\"Component\", 1:length(FA.load.names[[2]]))\n"),
+  "} else {\n",
+  echo("\tFA.load.names[[2]] <- paste(\"Factor\", 1:length(FA.load.names[[2]]))\n"),
+  "}\n",
+
+  echo("  FA.load <- FA.results$loadings[!is.character(FA.results$loadings)]\n  FA.load.mtx <- matrix(FA.load, nrow=FA.load.dim[1], dimnames=FA.load.names)\n"),
   R.comment("For printout, highlight loadings"),
-  echo("\tidx.load <- abs(FA.load) >= ", cutoff, "
-  FA.load.print <- digits(FA.load)
-  FA.load.print[idx.load] <- paste(\"<b>\", FA.load.print[idx.load], \"</b>\", sep=\"\")
-  FA.load.print <- matrix(FA.load.print, nrow=FA.load.dim[1], dimnames=FA.load.names)\n"),
+  echo("\tidx.load <- abs(FA.load) >= ", cutoff, "\n  FA.load.print <- digits(FA.load)\n  FA.load.print[idx.load] <- paste(\"<b>\", FA.load.print[idx.load], \"</b>\", sep=\"\")\n  FA.load.print <- matrix(FA.load.print, nrow=FA.load.dim[1], dimnames=FA.load.names)\n"),
   R.comment("Append communality and uniqueness"),
-  echo("\tFA.load.print <- cbind(FA.load.print,\n\t\t",
-    i18n("communality"), "=paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.results$communality), \"</span>\", sep=\"\"),\n\t\t",
-    i18n("uniqueness"), "=paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.results$uniquenesses), \"</span>\", sep=\"\"))\n"),
+  echo("\tFA.load.print <- cbind(FA.load.print,\n\t\t", i18n("communality"), "=paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.results$communality), \"</span>\", sep=\"\"),\n\t\t", i18n("uniqueness"), "=paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.results$uniquenesses), \"</span>\", sep=\"\"))\n"),
+
   R.comment("Append sum of squared loadings"),
-  js(
-    if("isObrot"){
-      echo("\tFA.s2load <- diag(FA.results$Phi %*% t(FA.results$loadings) %*% FA.results$loadings)\n")
-    } else {
-      echo("\tFA.s2load <- colSums(FA.results$loadings^2)\n")
-    }
-  ),
+
+  # 3. CRITICAL FIX: Explicit JS IF for oblique rotation
+  "if (isObrot) {\n",
+  echo("\tFA.s2load <- diag(FA.results$Phi %*% t(FA.results$loadings) %*% FA.results$loadings)\n"),
+  "} else {\n",
+  echo("\tFA.s2load <- colSums(FA.results$loadings^2)\n"),
+  "}\n",
+
   R.comment("Variance explained"),
-  echo("\tFA.varExp <- 100 * FA.s2load / FA.load.dim[1]
-  FA.load.print <- rbind(FA.load.print,\n\t\t",
-    i18n("Sum of squared loadings"), "=c(paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.s2load), \"</span>\", sep=\"\"),
-    digits(sum(FA.s2load)), \"\"),\n\t\t",
-    i18n("Variance explained (%)"), "=c(paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.varExp), \"</span>\", sep=\"\"), \"\", \"\"),\n\t\t",
-    i18n("Variance explained (cum %)"), "=c(paste(\"<span style=\\\"color:grey;\\\">\", digits(cumsum(FA.varExp)), \"</span>\", sep=\"\"), \"\", \"\"))\n"),
+  echo("\tFA.varExp <- 100 * FA.s2load / FA.load.dim[1]\n  FA.load.print <- rbind(FA.load.print,\n\t\t", i18n("Sum of squared loadings"), "=c(paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.s2load), \"</span>\", sep=\"\"),\n    digits(sum(FA.s2load)), \"\"),\n\t\t", i18n("Variance explained (%)"), "=c(paste(\"<span style=\\\"color:grey;\\\">\", digits(FA.varExp), \"</span>\", sep=\"\"), \"\", \"\"),\n\t\t", i18n("Variance explained (cum %)"), "=c(paste(\"<span style=\\\"color:grey;\\\">\", digits(cumsum(FA.varExp)), \"</span>\", sep=\"\"), \"\", \"\"))\n"),
   R.comment("Finally, make it a data.frame"),
   echo("\tFA.load.print <- data.frame(FA.load.print, stringsAsFactors=FALSE)\n"),
-  js(
-    if("isObrot"){
-      R.comment("Prepare correlation matrix for printout")
-      echo("\tcomp.corr <- digits(FA.results$Phi)
-  dimnames(comp.corr) <- list(FA.load.names[[2]],FA.load.names[[2]])\n")
-    } else {}
-  ),
+
+  # 4. Avoid printing the correlation matrix if not oblique
+  "if (isObrot) {\n",
+  R.comment("Prepare correlation matrix for printout"),
+  echo("\tcomp.corr <- digits(FA.results$Phi)\n  dimnames(comp.corr) <- list(FA.load.names[[2]],FA.load.names[[2]])\n"),
+  "}\n",
+
   R.comment("Prepare score*factors matrix for printout"),
-  echo("\tscfc.corr <- data.frame(rbind(\n\t\t",
-    i18n("Correlation of scores with factors"), "=digits(sqrt(FA.results$R2)),\n\t\t",
-    i18n("Multiple R square of scores with factors"), "=digits(FA.results$R2),\n\t\t",
-    i18n("Minimum correlation of possible factor scores"), "=digits((2*FA.results$R2)-1)), stringsAsFactors=FALSE)
-  colnames(scfc.corr) <- FA.load.names[[2]]\n\n"),
+  echo("\tscfc.corr <- data.frame(rbind(\n\t\t", i18n("Correlation of scores with factors"), "=digits(sqrt(FA.results$R2)),\n\t\t", i18n("Multiple R square of scores with factors"), "=digits(FA.results$R2),\n\t\t", i18n("Minimum correlation of possible factor scores"), "=digits((2*FA.results$R2)-1)), stringsAsFactors=FALSE)\n  colnames(scfc.corr) <- FA.load.names[[2]]\n\n"),
   R.comment("Ok, here the actual output starts", level=1),
-  js(
-    if(factorMethod == "PCA"){
-      echo("rk.header (", i18n("Principal Component Analysis"))
-    } else {
-      echo("rk.header (", i18n("Factor Analysis"))
-    }
-  ),
-  echo(",\n\tparameters=list(\n"),
-  js(
-    if(factorMethod == "PCA"){
-      echo(
-        "\t\t", i18n("Number of components"), "=", numFactors, ",\n",
-        "\t\t", i18n("Rotation"), "=\"", rotationMethodPCA, "\""
-      )
-    } else {
-      echo(
-        "\t\t", i18n("Number of factors"), "=", numFactors, ",\n",
-        "\t\t", i18n("Factoring method"), "=\"", factorMethodEFA,"\",\n",
-        "\t\t", i18n("Rotation"), "=\"", rotationMethodEFA, "\""
-      )
-      if(kaiser){
-        echo(",\n\t\t", i18n("Normalization"), "=\"Kaiser\"")
-      } else {}
-    }
-  ),
-  echo("))\n"), # end rk.header()
-  echo(
-    "rk.results (list(\n\t",
-    i18n("Degrees of freedom"), "=FA.results$dof,\n\t",
-    i18n("Fit"), "=digits(FA.results$fit),\n\t",
-    i18n("Fit (off diag)"), "=digits(FA.results$fit.off)\n\t))\n"
-  ),
-  rk.JS.header("Loadings", level=4),
+
+  # 5. Explicit JS IF to print the selected parameters
+  paste0("if (", id(factorMethod), " == 'PCA') {\n"),
+  echo("rk.header (", i18n("Principal Component Analysis"), ",\n\tparameters=list(\n\t\t", i18n("Number of components"), "=", numFactors, ",\n\t\t", i18n("Rotation"), "=\"", rotationMethodPCA, "\"))\n"),
+  "} else {\n",
+  paste0("  if (", id(kaiser), " == 'true') {\n"),
+  echo("rk.header (", i18n("Factor Analysis"), ",\n\tparameters=list(\n\t\t", i18n("Number of factors"), "=", numFactors, ",\n\t\t", i18n("Factoring method"), "=\"", factorMethodEFA,"\",\n\t\t", i18n("Rotation"), "=\"", rotationMethodEFA, "\",\n\t\t", i18n("Normalization"), "=\"Kaiser\"))\n"),
+  "  } else {\n",
+  echo("rk.header (", i18n("Factor Analysis"), ",\n\tparameters=list(\n\t\t", i18n("Number of factors"), "=", numFactors, ",\n\t\t", i18n("Factoring method"), "=\"", factorMethodEFA,"\",\n\t\t", i18n("Rotation"), "=\"", rotationMethodEFA, "\"))\n"),
+  "  }\n",
+  "}\n",
+
+  echo("rk.results (list(\n\t", i18n("Degrees of freedom"), "=FA.results$dof,\n\t", i18n("Fit"), "=digits(FA.results$fit),\n\t", i18n("Fit (off diag)"), "=digits(FA.results$fit.off)\n\t))\n"),
+
+  echo("rk.header(\"Loadings\", level=4)\n"),
   echo("rk.results (FA.load.print)\n"),
-  js(
-    if("isObrot"){
-      rk.JS.header("Factor correlations", level=4)
-      echo("rk.results (data.frame(comp.corr, stringsAsFactors=FALSE))\n")
-    } else {}
-  ),
-#  echo("rk.header(\"Test of the hypothesis that ", numFactors, " factors are sufficient\", level=4)\n"),
-  rk.JS.header("Measures of factor score adequacy", level=4),
+
+  # 6. Explicit JS IF to skip the "Factor correlations" section
+  "if (isObrot) {\n",
+  echo("rk.header(\"Factor correlations\", level=4)\n"),
+  echo("rk.results (data.frame(comp.corr, stringsAsFactors=FALSE))\n"),
+  "}\n",
+
+  echo("rk.header(\"Measures of factor score adequacy\", level=4)\n"),
   echo("rk.results (scfc.corr)\n")
 )
+
